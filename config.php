@@ -4,22 +4,21 @@
  * MESA DE AYUDA / HELPDESK — Gobierno de Chile
  * config.php  →  Configuración única de conexión a la BD
  * ============================================================
- * Edite SOLO estas constantes al desplegar en cPanel:
- *  - DB_HOST suele ser "localhost" en cPanel.
- *  - El prefijo del usuario/BD en cPanel suele ser "cuenta_",
- *    ej.: "mesaayuda_db", "mesaayuda_user".
+ * Generado por install.php el 14/10/2026 18:43
+ * Si necesita cambiar credenciales, edite este archivo
+ * o vuelva a usar el instalador (con INSTALL_FORCE=1).
  */
 
 // -------- Base de datos --------
-define('DB_HOST', 'localhost');
+define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'mesa_ayuda');
 define('DB_USER', 'mesa_ayuda_user');
-define('DB_PASS', 'CAMBIA_ESTA_CLAVE');
+define('DB_PASS', 'test_pass_2026');
 define('DB_CHARSET', 'utf8mb4');
 
 // -------- Aplicación --------
 define('APP_NAME', 'Helpdesk | Gobierno de Chile');
-define('APP_URL', ''); // opcional: https://midominio.cl (sin "/" final)
+define('APP_URL', 'http://localhost:8099'); // opcional: https://midominio.cl (sin "/" final)
 define('UPLOAD_DIR', __DIR__ . '/uploads');
 define('MAX_UPLOAD_MB', 10);
 
