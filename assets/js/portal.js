@@ -39,7 +39,12 @@
   function escapeHtml(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
-  const ESTADOS_ES = { abierto: 'Abierto', en_proceso: 'En Proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' };
+  const ESTADOS_ES = {
+    nuevo: 'Nuevo', abierto: 'Abierto', asignado: 'Asignado', en_atencion: 'En atención',
+    esperando_solicitante: 'Esperando solicitante', esperando_tercero: 'Esperando tercero',
+    escalado: 'Escalado', resuelto: 'Resuelto', cerrado: 'Cerrado', reabierto: 'Reabierto',
+    cancelado: 'Cancelado', en_proceso: 'En atención',
+  };
 
   /* =====================================================================
      1) ACORDEÓN INLINE — tarjetas de acción rápida

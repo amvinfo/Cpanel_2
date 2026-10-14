@@ -96,7 +96,7 @@ switch ($action) {
             'ticket' => [
                 'codigo' => $codigo,
                 'token'  => $token,
-                'estado' => 'Abierto',
+                'estado' => ESTADOS_TICKET['abierto'],
             ],
         ], 201);
         break;
@@ -124,6 +124,9 @@ switch ($action) {
         $h = $pdo->prepare("SELECT autor, tipo, mensaje, creado_en FROM ticket_historial WHERE ticket_id = ? ORDER BY creado_en ASC, id ASC");
         $h->execute([$t['id']]);
 
+        /* Las notas internas NO se exponen al ciudadano; solo respuestas públicas. */
+        $visibles = array_values(array_filter($h->fetchAll(), fn($r) => !in_array($r['tipo'], ['nota_interna','creacion','estado','asignacion'], true)));
+
         json_out(['ok' => true, 'ticket' => [
             'id'         => (int)$t['id'],
             'codigo'     => $t['codigo'],
@@ -133,7 +136,7 @@ switch ($action) {
             'asunto'     => $t['asunto'],
             'descripcion'=> $t['descripcion'],
             'categoria'  => $t['categoria'] ?? 'Sin categoría',
-            'estado'     => $t['estado'],
+            'estado'     => ESTADOS_TICKET[$t['estado']] ?? ucfirst($t['estado']),
             'prioridad'  => $t['prioridad'],
             'tecnico'    => $t['tecnico'],
             'creado'     => fmt_fecha($t['creado_en']),
@@ -143,7 +146,7 @@ switch ($action) {
                 'tipo'  => $r['tipo'],
                 'mensaje' => $r['mensaje'],
                 'fecha' => fmt_fecha($r['creado_en']),
-            ], $h->fetchAll()),
+            ], $visibles),
         ]]);
         break;
 
