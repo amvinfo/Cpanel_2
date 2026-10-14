@@ -89,3 +89,68 @@ function str_len_safe(string $s): int
 {
     return function_exists('mb_strlen') ? mb_strlen($s) : strlen($s);
 }
+
+/* =====================================================================
+   VOCABULARIO UNIFICADO DEL CICLO DE VIDA DE TICKETS
+   (fuente única de verdad para APIs, portal y panel)
+   ===================================================================== */
+
+/** 11 estados del flujo de gestión (clave interna => etiqueta visible) */
+const ESTADOS_TICKET = [
+    'nuevo'                 => 'Nuevo',
+    'abierto'               => 'Abierto',
+    'asignado'              => 'Asignado',
+    'en_atencion'           => 'En atención',
+    'esperando_solicitante' => 'Esperando solicitante',
+    'esperando_tercero'     => 'Esperando tercero',
+    'escalado'              => 'Escalado',
+    'resuelto'              => 'Resuelto',
+    'cerrado'               => 'Cerrado',
+    'reabierto'             => 'Reabierto',
+    'cancelado'             => 'Cancelado',
+];
+
+/** Prioridades estándar */
+const PRIORIDADES_TICKET = ['baja' => 'Baja', 'media' => 'Media', 'alta' => 'Alta', 'urgente' => 'Urgente'];
+
+/** Categorías de tipología de soporte (modal Nuevo Ticket interno) */
+const TIPOS_TICKET = [
+    'Incidencia'   => 'Incidencia',
+    'Requerimiento'=> 'Requerimiento',
+    'Consulta'     => 'Consulta',
+    'Solicitud de acceso' => 'Solicitud de acceso',
+    'Mantención'   => 'Mantención programada',
+];
+
+/** Departamentos (editable según estructura institucional) */
+const DEPARTAMENTOS = [
+    'Dirección de Planificación', 'Dirección de Finanzas', 'Dirección de RRHH',
+    'Dirección de Operaciones', 'Unidad de Personas', 'Secretaría Regional Ministerial',
+    'Oficina de Partes', 'Unidad de Auditoría',
+];
+
+/** Ubicaciones / sedes */
+const UBICACIONES = [
+    'Edificio Central — Piso 1', 'Edificio Central — Piso 2', 'Edificio Central — Piso 3',
+    'Anexo A', 'Anexo B', 'Remoto / Teletrabajo',
+];
+
+/** Compatibilidad hacia atrás: los 4 estados legacy del esquema anterior. */
+function es_estado_ticket_valido(string $e): bool { return isset(ESTADOS_TICKET[$e]); }
+
+/** Mapea estados legacy -> nuevo vocabulario (por si hay datos antiguos). */
+function estado_legacy_a_nuevo(string $e): string
+{
+    switch ($e) {
+        case 'en_proceso': return 'en_atencion';
+        default:           return $e; // abierto/resuelto/cerrado/nuevo... igual
+    }
+}
+
+/** Normaliza cualquier estado a uno conocido (siempre devuelve clave válida). */
+function estado_normalizado(?string $e): string
+{
+    $e = strtolower(trim((string)$e));
+    if ($e === '' || !isset(ESTADOS_TICKET[$e])) return 'nuevo';
+    return $e;
+}
