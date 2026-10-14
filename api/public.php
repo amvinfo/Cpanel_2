@@ -18,15 +18,54 @@ function nuevo_codigo(PDO $pdo): string
     $max = $pdo->query("SELECT MAX(CAST(SUBSTRING(codigo, -5) AS UNSIGNED)) FROM tickets WHERE codigo LIKE 'TKT-$anio-%'")->fetchColumn();
     return sprintf('TKT-%s-%05d', $anio, (int)$max + 1);
 }
+/**
+ * Genera un token de seguimiento legible (ej: "3A45-868A-B724").
+ * Se genera SIN guiones para el chequeo de unicidad y se formatea al final.
+ */
 function nuevo_token(): string
 {
+    $pdo = db();
+    $chk = $pdo->prepare("SELECT COUNT(*) FROM tickets WHERE REPLACE(token_consulta,'-','') = ?");
     do {
-        $t = strtoupper(substr(bin2hex(random_bytes(8)), 0, 12));
-        $t = implode('-', str_split($t, 4)); // ej: A7X3-K9P2-M1Q4
-        $ok = db()->prepare("SELECT COUNT(*) FROM tickets WHERE REPLACE(token_consulta,'-','')=?");
-        $ok->execute([str_replace('-', '', $t)]);
-    } while ($ok->fetchColumn() > 0);
-    return $t;
+        $raw = strtoupper(bin2hex(random_bytes(6))); // 12 caracteres hex sin guiones
+        $chk->execute([$raw]);
+    } while ($chk->fetchColumn() > 0);
+    return implode('-', str_split($raw, 4)); // XXXX-XXXX-XXXX (14 chars)
+}
+
+/**
+ * Insert el ticket con tolerancia a esquemas antiguos:
+ * si la BD aún tiene `token_consulta` CHAR(12) (esquema v1), se guarda
+ * el token sin guiones en lugar de fallar con "Data too long" (HTTP 500).
+ */
+function insert_ticket(PDO $pdo, array $d): int
+{
+    static $w = null;
+    if ($w === null) {
+        $cols = [];
+        foreach ($pdo->query('SHOW COLUMNS FROM `tickets`')->fetchAll() as $r) $cols[] = $r['Field'];
+        $tokLen = 12;
+        foreach ($pdo->query("SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tickets' AND COLUMN_NAME = 'token_consulta'")->fetchAll() as $r) {
+            if ((int)$r['CHARACTER_MAXIMUM_LENGTH'] > 0) $tokLen = (int)$r['CHARACTER_MAXIMUM_LENGTH'];
+        }
+        $w = [
+            'token14' => in_array('token_consulta', $cols, true) && $tokLen >= 14,
+            'tipo'    => in_array('tipo', $cols, true),
+            'origen'  => in_array('origen', $cols, true),
+            'depto'   => in_array('departamento', $cols, true),
+            'ubic'    => in_array('ubicacion', $cols, true),
+        ];
+    }
+    $campos = ['codigo','token_consulta','solicitante','email','asunto','descripcion','categoria_id','adjunto','estado','prioridad'];
+    $vals   = [$d['codigo'], $w['token14'] ? $d['token'] : str_replace('-', '', $d['token']),
+               $d['nombre'], $d['email'], $d['asunto'], $d['desc'], $d['catId'], $d['adjunto'], 'nuevo', 'media'];
+    if ($w['tipo'])   { $campos[] = 'tipo';         $vals[] = 'Incidencia'; }
+    if ($w['origen']) { $campos[] = 'origen';       $vals[] = 'publico';    }
+    if ($w['depto'])  { $campos[] = 'departamento'; $vals[] = null;         }
+    if ($w['ubic'])   { $campos[] = 'ubicacion';    $vals[] = null;         }
+    $ph = implode(',', array_fill(0, count($campos), '?'));
+    $pdo->prepare('INSERT INTO tickets (' . implode(',', $campos) . ") VALUES ($ph)")->execute($vals);
+    return (int)$pdo->lastInsertId();
 }
 function fmt_fecha(?string $f): string
 {
@@ -80,12 +119,15 @@ switch ($action) {
         $codigo = nuevo_codigo($pdo);
         $token  = nuevo_token();
 
-        $st = $pdo->prepare(
-            "INSERT INTO tickets (codigo, token_consulta, solicitante, email, asunto, descripcion, categoria_id, adjunto, estado, prioridad)
-             VALUES (?,?,?,?,?,?,?,?,'abierto','media')"
-        );
-        $st->execute([$codigo, $token, $nombre, $email, $asunto, $desc, $catId ?: null, $adjunto]);
-        $tid = (int)$pdo->lastInsertId();
+        try {
+            $tid = insert_ticket($pdo, [
+                'codigo' => $codigo, 'token' => $token, 'nombre' => $nombre, 'email' => $email,
+                'asunto' => $asunto, 'desc' => $desc, 'catId' => $catId ?: null, 'adjunto' => $adjunto,
+            ]);
+        } catch (PDOException $e) {
+            error_log('crear_ticket: ' . $e->getMessage());
+            json_out(['ok' => false, 'error' => 'No fue posible registrar la solicitud. Intente nuevamente o contacte al administrador.'], 500);
+        }
 
         $pdo->prepare("INSERT INTO ticket_historial (ticket_id, autor, tipo, mensaje) VALUES (?,?, 'creacion', ?)")
             ->execute([$tid, $nombre, 'Ticket creado automáticamente desde el Portal Ciudadano.']);
@@ -96,7 +138,7 @@ switch ($action) {
             'ticket' => [
                 'codigo' => $codigo,
                 'token'  => $token,
-                'estado' => ESTADOS_TICKET['abierto'],
+                'estado' => ESTADOS_TICKET['nuevo'] ?? 'Nuevo',
             ],
         ], 201);
         break;

@@ -210,7 +210,7 @@ function run_embedded_schema(PDO $pdo, string $hash, bool $demo): array
         "CREATE TABLE IF NOT EXISTS `tickets` (
           `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
           `codigo` VARCHAR(30) NOT NULL UNIQUE,
-          `token_consulta` CHAR(12) NOT NULL UNIQUE,
+          `token_consulta` VARCHAR(14) NOT NULL UNIQUE,
           `solicitante` VARCHAR(120) NOT NULL,
           `email` VARCHAR(150) NOT NULL,
           `asunto` VARCHAR(200) NOT NULL,

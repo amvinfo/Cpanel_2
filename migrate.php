@@ -26,6 +26,7 @@ $pdo = db();
 $log = [];
 $err = 0;
 
+
 function col_exists(PDO $pdo, string $tabla, string $col): bool
 {
     $st = $pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS
@@ -68,20 +69,60 @@ if (!col_exists($pdo, 'tickets', 'creado_por')) {
         'FK creado_por creada', $log, $err);
 } else { $log[] = '· tickets.creado_por ya existe'; }
 
-/* ---------- 2. Ampliar ENUMs ---------- */
-run($pdo, "ALTER TABLE tickets MODIFY `estado` ENUM('" . implode("','", array_keys(ESTADOS_TICKET)) . "') NOT NULL DEFAULT 'nuevo'",
-    'tickets.estado ampliado a 11 estados', $log, $err);
-run($pdo, "ALTER TABLE tickets MODIFY `prioridad` ENUM('" . implode("','", array_keys(PRIORIDADES_TICKET)) . "') NOT NULL DEFAULT 'media'",
-    'tickets.prioridad ampliado (baja/media/alta/urgente)', $log, $err);
-run($pdo, "ALTER TABLE ticket_historial MODIFY `tipo` ENUM('respuesta','nota_interna','ciudadano','estado','asignacion','creacion') NOT NULL DEFAULT 'respuesta'",
-    'ticket_historial.tipo ampliado (nota_interna)', $log, $err);
+/* ---------- 1b. Enschar token_consulta CHAR(12) -> VARCHAR(14) (esquema v1) ---------- */
+try {
+    $r = $pdo->query("SELECT CHARACTER_MAXIMUM_LENGTH l, DATA_TYPE t FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tickets' AND COLUMN_NAME = 'token_consulta'")->fetch(PDO::FETCH_ASSOC);
+    if ($r && strtolower($r['t']) === 'char' && (int)$r['l'] < 14) {
+        run($pdo, "ALTER TABLE tickets MODIFY `token_consulta` VARCHAR(14) NOT NULL",
+            'tickets.token_consulta ampliada a VARCHAR(14) (tokens con guiones)', $log, $err);
+    } else { $log[] = '· tickets.token_consulta ya admite tokens de seguimiento (VARCHAR)'; }
+} catch (PDOException $e) { $log[] = '· token_consulta: no verificable (' . $e->getMessage() . ')'; }
 
-/* ---------- 3. Normalizar datos legacy ---------- */
-$n1 = $pdo->exec("UPDATE tickets SET estado = 'en_atencion' WHERE estado = 'en_proceso'");
-$n2 = $pdo->exec("UPDATE tickets SET estado = 'abierto'    WHERE estado = 'asignado' AND asignado_a IS NULL");
-$n3 = $pdo->exec("UPDATE tickets SET prioridad = 'urgente' WHERE prioridad = 'critica'");
-$n4 = $pdo->exec("UPDATE ticket_historial SET tipo = 'respuesta' WHERE tipo = 'comentario'");
-$log[] = "· Datos normalizados: $n1 ticket(s) 'en_proceso'→'en_atencion', $n3 'critica'→'urgente', $n4 comentario(s)→respuesta.";
+/* ---------- 2. Ampliar ticket_historial.tipo (incl. 'comentario' temporal) ---------- */
+/* Al ser superconjunto del vocabulario antiguo, nunca produce truncamiento. */
+run($pdo, "ALTER TABLE ticket_historial MODIFY `tipo` ENUM('respuesta','nota_interna','ciudadano','estado','asignacion','creacion','comentario') NOT NULL DEFAULT 'respuesta'",
+    'ticket_historial.tipo ampliado (incluye nota_interna)', $log, $err);
+
+/* ---------- 3. Ampliar tickets.estado/prioridad con técnica de valor temporal ---------- */
+$estados = array_keys(ESTADOS_TICKET);                       // 11 estados v2
+$prios   = array_keys(PRIORIDADES_TICKET);                   // baja/media/alta/urgente
+$extra   = ['en_proceso', 'critica'];                        // valores legacy aún presentes
+
+$allEstados = array_unique(array_merge($estados, $extra)); // v2 + legacy posibles
+
+try {
+    /* 3.1 ENUM universal: vocabulario v2 + valores legacy + marcador temporal.
+          Al ser superconjunto del estado anterior, NUNCA produce truncamiento. */
+    $pdo->exec("ALTER TABLE tickets MODIFY `estado` ENUM('" . implode("','", $allEstados) . "','__tmp__') NOT NULL DEFAULT 'abierto'");
+    /* 3.2 mapear valores ajenos (si existieran) al marcador */
+    $pdo->exec("UPDATE tickets SET estado = '__tmp__' WHERE estado NOT IN ('" . implode("','", $allEstados) . "')");
+    /* 3.3 normalizar legacy -> v2 */
+    $pdo->exec("UPDATE tickets SET estado = 'en_atencion' WHERE estado = '__tmp__' OR estado = 'en_proceso'");
+    $pdo->exec("UPDATE tickets SET estado = 'abierto'     WHERE estado = 'asignado' AND asignado_a IS NULL");
+    /* 3.4 aplicar el ENUM definitivo v2 (ya sin datos legacy) */
+    $pdo->exec("ALTER TABLE tickets MODIFY `estado` ENUM('" . implode("','", $estados) . "') NOT NULL DEFAULT 'nuevo'");
+    $log[] = '✔ tickets.estado migrado a 11 estados (legacy en_proceso → en_atencion) sin pérdida de filas';
+} catch (PDOException $e) {
+    $log[] = '✖ tickets.estado → ' . $e->getMessage(); $err++;
+}
+
+try {
+    $pdo->exec("ALTER TABLE tickets MODIFY `prioridad` ENUM('" . implode("','", array_unique(array_merge($prios, $extra))) . "','__tmp__') NOT NULL DEFAULT 'media'");
+    $pdo->exec("UPDATE tickets SET prioridad = '__tmp__' WHERE prioridad NOT IN ('" . implode("','", array_unique(array_merge($prios, $extra))) . "')");
+    $pdo->exec("UPDATE tickets SET prioridad = 'urgente' WHERE prioridad = '__tmp__' OR prioridad = 'critica'");
+    $pdo->exec("ALTER TABLE tickets MODIFY `prioridad` ENUM('" . implode("','", $prios) . "') NOT NULL DEFAULT 'media'");
+    $log[] = '✔ tickets.prioridad migrado (critica → urgente) sin pérdida de filas';
+} catch (PDOException $e) {
+    $log[] = '✖ tickets.prioridad → ' . $e->getMessage(); $err++;
+}
+
+try {
+    $pdo->exec("UPDATE ticket_historial SET tipo = 'respuesta' WHERE tipo = 'comentario'");
+    $pdo->exec("ALTER TABLE ticket_historial MODIFY `tipo` ENUM('respuesta','nota_interna','ciudadano','estado','asignacion','creacion') NOT NULL DEFAULT 'respuesta'");
+    $log[] = '✔ ticket_historial.tipo normalizado (comentario → respuesta)';
+} catch (PDOException $e) {
+    $log[] = '· historial.tipo: ' . $e->getMessage();
+}
 
 /* ---------- 4. Índices auxiliares ---------- */
 try { $pdo->exec("ALTER TABLE tickets ADD KEY `idx_prioridad` (`prioridad`)"); $log[] = '✔ índice idx_prioridad creado'; }

@@ -52,7 +52,7 @@ DROP TABLE IF EXISTS `tickets`;
 CREATE TABLE `tickets` (
   `id`             INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `codigo`         VARCHAR(30)  NOT NULL UNIQUE,       -- TK-XXXXXXXX
-  `token_consulta` CHAR(12)     NOT NULL UNIQUE,       -- código ciudadano p/ consultar
+  `token_consulta` VARCHAR(14)  NOT NULL UNIQUE,       -- código ciudadano p/ consultar (XXXX-XXXX-XXXX)
   `solicitante`    VARCHAR(120) NOT NULL,
   `email`          VARCHAR(150) NOT NULL,
   `asunto`         VARCHAR(200) NOT NULL,
