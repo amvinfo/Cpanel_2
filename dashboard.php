@@ -45,7 +45,7 @@ $u = $_SESSION['user'];
     <header class="dash-topbar">
       <h1>Panel de Control — Mesa de Ayuda</h1>
       <div class="usuario-chip">
-        <span class="avatar" aria-hidden="true"><?= strtoupper(mb_substr($u['nombre'], 0, 1)) ?></span>
+        <span class="avatar" aria-hidden="true"><?= strtoupper(function_exists('mb_substr') ? mb_substr($u['nombre'], 0, 1) : substr($u['nombre'], 0, 1)) ?></span>
         <span><strong><?= htmlspecialchars($u['nombre']) ?></strong><br>
           <small style="text-transform:capitalize"><?= htmlspecialchars($u['rol']) ?></small></span>
       </div>
