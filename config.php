@@ -154,3 +154,45 @@ function estado_normalizado(?string $e): string
     if ($e === '' || !isset(ESTADOS_TICKET[$e])) return 'nuevo';
     return $e;
 }
+
+/* =====================================================================
+   DIAGNÓSTICO / ROBUSTEZ JSON
+   ===================================================================== */
+
+/**
+ * json_fail(): respuesta de error garantizada. Si json_encode falla
+ * (por p.ej. datos con bytes inválidos en UTF-8), emite un JSON de
+ * emergencia construido SIN json_encode, para que el navegador nunca
+ * reciba una respuesta vacía ("Unexpected end of JSON input").
+ */
+function json_fail(string $error, int $code = 500): void
+{
+    http_response_code($code);
+    header('Content-Type: application/json; charset=utf-8');
+    $msg = preg_replace('/[^\x20-\x7E]/u', '', str_replace(['\\', '"'], ['\\\\', '\\"'], $error));
+    echo '{"ok":false,"error":"' . $msg . '"}';
+    exit;
+}
+
+/**
+ * Registros de últimos errores PHP (visibles también cuando APP_DEBUG=false).
+ * Se usa como fallback cuando la API no puede devolver JSON válido.
+ */
+function ultimosErroresPhp(int $max = 3): string
+{
+    $f = function_exists('get_error_log') ? get_error_log() : '';
+    if (!$f) {
+        $candidatos = [
+            ini_get('error_log'),
+            '/var/log/php-fpm/error.log',
+            '/var/log/apache2/error.log',
+        ];
+        foreach ($candidatos as $c) { if ($c && is_file($c) && is_readable($c)) { $f = $c; break; } }
+    }
+    if (!$f || !is_file($f) || !is_readable($f)) return '';
+    $lineas = file($f, FILE_IGNORE_NEW_LINES);
+    if ($lineas === false) return '';
+    $mine = array_values(array_filter($lineas, fn($l) => stripos($l, basename($_SERVER['SCRIPT_NAME'] ?? '')) !== false || preg_match('/crear_ticket|panel\.php|public\.php/i', $l)));
+    $usa = $mine ?: $lineas;
+    return trim(implode("\n", array_slice($usa, -$max)));
+}
