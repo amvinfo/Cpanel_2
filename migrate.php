@@ -134,11 +134,31 @@ catch (PDOException $e) { $log[] = '· idx_prioridad ya existe o no aplicable'; 
    ===================================================================== */
 $V3_FILE = __DIR__ . '/schema_v3.sql';
 if (is_file($V3_FILE)) {
-    $sqlv3 = file_get_contents($V3_FILE);
-    foreach (preg_split('/;\s*\n/', $sqlv3) as $stmtv3) {
+    /* Divisor seguro: solo "." en una línea sola (formato phpMyAdmin).
+       Así nunca se corta una sentencia multi-línea ni se confunde con
+       un ";" dentro de literales SQL. */
+    $sqlv3 = str_replace("\r\n", "\n", file_get_contents($V3_FILE));
+    if (strpos($sqlv3, "\nDELIMITER $$\n") !== false) {
+        $sqlv3 = preg_replace('/^\s*DELIMITER\s+\$\$\s*$/mi', ';', $sqlv3);
+        $sqlv3 = preg_replace('/^\s*END\s*\$/mi', 'END;', $sqlv3);
+    }
+    foreach (explode("\n.\n", $sqlv3) as $stmtv3) {
         $stmtv3 = trim(preg_replace('/^--.*$/m', '', $stmtv3));
         if ($stmtv3 === '') continue;
-        run($pdo, $stmtv3, 'schema_v3: ' . substr(preg_replace('/\s+/', ' ', $stmtv3), 0, 60) . '...', $log, $err);
+        try {
+            $pdo->exec($stmtv3);
+            $log[] = '✔ schema_v3: ' . substr(preg_replace('/\s+/', ' ', $stmtv3), 0, 60) . '...';
+        } catch (PDOException $e) {
+            $code = (string) ($e->errorInfo[1] ?? '');
+            // 1050 tabla existe · 1060 columna existe · 1061 índice existe
+            // 1091 no existe · 1826 FK existe · 1054 columna desconocida (AFTER)
+            if (in_array($code, ['1050', '1060', '1061', '1091', '1826', '1054'], true)) {
+                $log[] = '· schema_v3 omitida (ya aplicada): ' . substr(preg_replace('/\s+/', ' ', $stmtv3), 0, 60) . '...';
+            } else {
+                $log[] = '✖ schema_v3 → ' . $e->getMessage();
+                $err++;
+            }
+        }
     }
 } else {
     $log[] = 'X No se encontro schema_v3.sql junto a migrate.php (modulos v3 no instalados).';

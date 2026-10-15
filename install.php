@@ -338,21 +338,83 @@ function run_embedded_schema(PDO $pdo, string $hash, bool $demo): array
 /* ------------------------------------------------------------------ */
 /*  EJECUTOR DE schema.sql (si existe el archivo)                      */
 /* ------------------------------------------------------------------ */
+/**
+ * Divide un script SQL en sentencias seguras para PDO::exec().
+ * - Respeta comillas simples/dobles y acentos graves (`) al buscar el punto y coma.
+ * - Elimina comentarios de línea (-- ...) y de bloque (/* ... *\/).
+ * - No corta sentencias multi-línea en saltos de línea.
+ */
+function sql_split_statements(string $sql): array
+{
+    // quitar comentarios de bloque y de línea (no altera literales de nuestro schema)
+    $sql = preg_replace('#/\*.*?\*/#s', ' ', $sql);
+    $out = [];
+    $buf = '';
+    $quote = null; // "'" | '"' | '`'
+    $len = strlen($sql);
+    for ($i = 0; $i < $len; $i++) {
+        $ch = $sql[$i];
+        if ($quote !== null) {
+            if ($ch === "\\") {                 // secuencia de escape dentro del literal
+                $buf .= $ch . ($sql[$i + 1] ?? '');
+                $i++;
+                continue;
+            }
+            if ($ch === $quote) {
+                // doble comilla = escape interno ('' o ""), no cierre
+                if (($quote === "'" || $quote === '"') && ($sql[$i + 1] ?? '') === $quote) {
+                    $buf .= $ch . $quote;
+                    $i++;
+                    continue;
+                }
+                $quote = null;
+            }
+            $buf .= $ch;
+            continue;
+        }
+        if ($ch === '-' && $sql[$i + 1] === '-') { // comentario de línea
+            $eol = strpos($sql, "\n", $i);
+            $i = ($eol === false) ? $len : $eol;   // el \n se procesará en la iteración siguiente
+            continue;
+        }
+        if ($ch === "'" || $ch === '"' || $ch === '`') { $quote = $ch; $buf .= $ch; continue; }
+        if ($ch === ';') {
+            $stmt = trim($buf);
+            if ($stmt !== '') $out[] = $stmt;
+            $buf = '';
+            continue;
+        }
+        $buf .= $ch;
+    }
+    $stmt = trim($buf);
+    if ($stmt !== '') $out[] = $stmt;
+    return $out;
+}
+
 function run_sql_file(PDO $pdo, string $file): array
 {
     $sql = file_get_contents($file);
     if ($sql === false) throw new RuntimeException('No se pudo leer ' . $file);
     $log = [];
-    // separador seguro: solo líneas ";" solas (nuestro schema lo usa)
-    $parts = preg_split('/^\s*;\s*$/m', $sql);
-    $ejecutadas = 0;
-    foreach ($parts as $p) {
-        $p = trim(preg_replace('/^--.*$/m', '', $p)); // quitar comentarios de línea
-        if ($p === '') continue;
-        $pdo->exec($p);
-        $ejecutadas++;
+    $sentencias = sql_split_statements($sql);
+    $base = basename($file);
+    foreach ($sentencias as $st) {
+        try {
+            $pdo->exec($st);
+        } catch (PDOException $e) {
+            $code = (string) ($e->errorInfo[1] ?? '');
+            // Tolerancia a reinstalaciones/updates sobre una BD ya migrada:
+            // 1050 tabla existe · 1060 columna existe · 1061 índice existe
+            // 1091 no existe (drop/alter inverso) · 1826 FK ya existe · 1054 columna desconocida en AFTER
+            if (in_array($code, ['1050', '1060', '1061', '1091', '1826', '1054'], true)) {
+                $log[] = "⚠️ {$base}: sentencia omitida (ya aplicada): " . htmlspecialchars(substr($st, 0, 60)) . '…';
+                continue;
+            }
+            throw new RuntimeException("Error en {$base}: " . $e->getMessage()
+                . ' — Sentencia: ' . substr($st, 0, 160));
+        }
     }
-    $log[] = "schema.sql ejecutado correctamente ($ejecutadas sentencias).";
+    $log[] = "{$base} ejecutado correctamente (" . count($sentencias) . " sentencias).";
     return $log;
 }
 
