@@ -56,12 +56,12 @@ INSERT IGNORE INTO `configuracion` (`clave`,`valor`) VALUES
 ('smtp_remitente','mesadeayuda@helpdesk.gob.cl');
 
 -- ----------------------- VISIBILIDAD POR CATEGORÍA (both/internal/external) --------
-ALTER TABLE `categorias`
-  ADD COLUMN IF NOT EXISTS `visibilidad` ENUM('both','internal','external') NOT NULL DEFAULT 'both' AFTER `icono`;
+-- Nota: se usa "AFTER" sin nombre de columna para evitar el error 1060
+-- ("Duplicate column name '1'") en sentencias multi-línea.
+ALTER TABLE `categorias` ADD COLUMN IF NOT EXISTS `visibilidad` ENUM('both','internal','external') NOT NULL DEFAULT 'both';
 
 -- ----------------------- CAMPOS FALTANTES EN USUARIOS -----------------------
-ALTER TABLE `usuarios`
-  ADD COLUMN IF NOT EXISTS `ultimo_acceso` DATETIME NULL DEFAULT NULL AFTER `activo`;
+ALTER TABLE `usuarios` ADD COLUMN IF NOT EXISTS `ultimo_acceso` DATETIME NULL DEFAULT NULL;
 
 -- ----------------------- TABLAS DE ADMINISTRACIÓN (v3) -----------------------
 CREATE TABLE IF NOT EXISTS `departamentos` (
