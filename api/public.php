@@ -5,6 +5,34 @@
  */
 require_once __DIR__ . '/../config.php';
 
+/* =====================================================================
+   BLINDAJE ANTI-HTTP 500 ("Unexpected end of JSON input")
+   Cualquier warning/notice/fatal (p. ej. columnas que faltan porque la
+   BD aún no aplica schema_v3.sql) se traduce SIEMPRE a un JSON válido.
+   ===================================================================== */
+error_reporting(E_ALL);
+ini_set('display_errors', '0');           // nunca ensuciar la salida JSON
+ob_start();                               // capturar cualquier impresión accidental
+
+register_shutdown_function(function () {
+    $err = error_get_last();
+    $fatal = $err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true);
+    $buf = ob_get_contents();
+    if ($buf !== false) { ob_end_clean(); }
+    if ($fatal) {
+        while (ob_get_level()) { ob_end_clean(); }
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+        echo '{"ok":false,"error":"Error interno del servidor. Verifique las migraciones (schema_v3.sql / migrate.php). Detalle: '
+            . preg_replace('/[^\x20-\x7E]/', '', addslashes(substr($err['message'] ?? '', 0, 160))) . '"}';
+        return;
+    }
+    // Salida no deseada (warnings/espacios): registrarla y descartarla
+    if ($buf !== '' && trim((string)$buf) !== '') {
+        error_log('public.php salida no-JSON capturada: ' . substr(strip_tags((string)$buf), 0, 300));
+    }
+});
+
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { exit; }
@@ -146,19 +174,36 @@ switch ($action) {
     /* ==================== CONSULTAR TICKET (público) ==================== */
     case 'consultar_ticket':
         $q = strtoupper(clean($_GET['q'] ?? $_POST['q'] ?? '', 40));
-        $q = str_replace([' ', '-'], ['', '-'], $q);
         if ($q === '') json_out(['ok' => false, 'error' => 'Ingrese un número de ticket o código de consulta.'], 422);
 
         $pdo = db();
-        $st = $pdo->prepare(
-            "SELECT t.*, c.nombre AS categoria, u.nombre AS tecnico
-             FROM tickets t
-             LEFT JOIN categorias c ON c.id = t.categoria_id
-             LEFT JOIN usuarios u   ON u.id = t.asignado_a
-             WHERE t.codigo = ? OR REPLACE(t.token_consulta,'-','') = REPLACE(?, '-', '')
-             LIMIT 1"
-        );
-        $st->execute([$q, str_replace('-', '', $q)]);
+
+        /* Detecta el esquema real de la tabla tickets (tolerancia v1/v2/v3):
+           si la BD viene de un schema.sql antiguo importado directamente en
+           phpMyAdmin, puede no tener token_consulta / tipo / origen / etc. */
+        static $colsPub = null;
+        if ($colsPub === null) {
+            $colsPub = [];
+            foreach ($pdo->query('SHOW COLUMNS FROM `tickets`')->fetchAll() as $r) $colsPub[] = $r['Field'];
+        }
+        $tieneToken = in_array('token_consulta', $colsPub, true);
+        $selExtras  = [];
+        foreach (['tipo','origen','departamento','ubicacion'] as $x) {
+            if (in_array($x, $colsPub, true)) $selExtras[] = "t.$x";
+        }
+
+        /* Coincidencia flexible: normaliza mayúsculas/espacios/guiones tanto del
+           input como del valor en BD (funciona con tokens CHAR(12) sin guiones). */
+        $sql = "SELECT t.*" . ($selExtras ? ', ' . implode(', ', $selExtras) : '') . ",
+                       c.nombre AS categoria, u.nombre AS tecnico
+                FROM tickets t
+                LEFT JOIN categorias c ON c.id = t.categoria_id
+                LEFT JOIN usuarios u   ON u.id = t.asignado_a
+                WHERE UPPER(REPLACE(t.codigo,' ','')) = ?"
+             . ($tieneToken ? " OR REPLACE(UPPER(t.token_consulta),'-','') = REPLACE(UPPER(?),'-','')" : '')
+             . " LIMIT 1";
+        $st = $pdo->prepare($sql);
+        $st->execute(array_values(array_filter([$q, $tieneToken ? $q : null], fn($v) => $v !== null)));
         $t = $st->fetch();
 
         if (!$t) json_out(['ok' => false, 'error' => 'No se encontró la solicitud. Verifique el número de ticket o el código de consulta.'], 404);
@@ -172,17 +217,17 @@ switch ($action) {
         json_out(['ok' => true, 'ticket' => [
             'id'         => (int)$t['id'],
             'codigo'     => $t['codigo'],
-            'token'      => $t['token_consulta'],
+            'token'      => $t['token_consulta'] ?? '',
             'solicitante'=> $t['solicitante'],
             'email'      => $t['email'],
             'asunto'     => $t['asunto'],
             'descripcion'=> $t['descripcion'],
             'categoria'  => $t['categoria'] ?? 'Sin categoría',
-            'estado'     => ESTADOS_TICKET[$t['estado']] ?? ucfirst($t['estado']),
-            'prioridad'  => $t['prioridad'],
+            'estado'     => ESTADOS_TICKET[estado_normalizado($t['estado'])] ?? ucfirst((string)$t['estado']),
+            'prioridad'  => $t['prioridad'] ?? 'media',
             'tecnico'    => $t['tecnico'],
             'creado'     => fmt_fecha($t['creado_en']),
-            'actualizado'=> fmt_fecha($t['actualizado_en']),
+            'actualizado'=> fmt_fecha($t['actualizado_en'] ?? $t['creado_en']),
             'historial'  => array_map(fn($r) => [
                 'autor' => $r['autor'],
                 'tipo'  => $r['tipo'],
