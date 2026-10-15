@@ -321,6 +321,17 @@ function run_embedded_schema(PDO $pdo, string $hash, bool $demo): array
         $log[] = "Historial, respuestas y notas internas de demostración insertadas.";
     }
 
+    /* ---- v3: tablas de Base de Conocimiento, Administración y Auditoría ---- */
+    if (!is_file(BASE_DIR . '/schema_v3.sql')) {
+        require_once __DIR__ . '/schema_v3_embebido.php';
+        $v3 = schema_v3_sentencias();
+        $n3 = 0;
+        foreach ($v3 as $q) {
+            try { $pdo->exec($q); $n3++; } catch (Throwable $e) { /* idempotente */ }
+        }
+        $log[] = "Esquema v3 embebido aplicado ($n3 sentencias): KB + Administración + Auditoría.";
+    }
+
     return $log;
 }
 
@@ -424,6 +435,11 @@ if ($yaInstalado && !$fuerzaReinstall && $etapa !== 'bloqueo') {
                 $resultados = array_merge($resultados, run_sql_file($pdo, SCHEMA_FILE));
             } else {
                 $resultados = array_merge($resultados, run_embedded_schema($pdo, $hash, $demo));
+            }
+            // v3: modulos Base de Conocimiento / Administracion / Auditoria
+            if (is_file(BASE_DIR . '/schema_v3.sql')) {
+                try { $resultados = array_merge($resultados, run_sql_file($pdo, BASE_DIR . '/schema_v3.sql')); }
+                catch (Throwable $e) { $errores[] = 'Error esquema v3: ' . $e->getMessage(); }
             }
             $resultados = array_merge($resultados, post_install($pdo, $hash));
 

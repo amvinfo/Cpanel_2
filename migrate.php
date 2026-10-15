@@ -128,6 +128,23 @@ try {
 try { $pdo->exec("ALTER TABLE tickets ADD KEY `idx_prioridad` (`prioridad`)"); $log[] = '✔ índice idx_prioridad creado'; }
 catch (PDOException $e) { $log[] = '· idx_prioridad ya existe o no aplicable'; }
 
+/* =====================================================================
+   v3 — Base de Conocimiento, Administración del Sistema, Perfil, Auditoría
+   (migración idempotente: puede volver a ejecutarse sin errores)
+   ===================================================================== */
+$V3_FILE = __DIR__ . '/schema_v3.sql';
+if (is_file($V3_FILE)) {
+    $sqlv3 = file_get_contents($V3_FILE);
+    foreach (preg_split('/;\s*\n/', $sqlv3) as $stmtv3) {
+        $stmtv3 = trim(preg_replace('/^--.*$/m', '', $stmtv3));
+        if ($stmtv3 === '') continue;
+        run($pdo, $stmtv3, 'schema_v3: ' . substr(preg_replace('/\s+/', ' ', $stmtv3), 0, 60) . '...', $log, $err);
+    }
+} else {
+    $log[] = 'X No se encontro schema_v3.sql junto a migrate.php (modulos v3 no instalados).';
+    $err++;
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="es-CL">
